@@ -1,1237 +1,613 @@
-"""
-Business Modeling Studio — POC
-Baseado em: Bridgeland & Zahavi (2009) + OMG Standards (BMM, BPMN 2.0, SBVR, DMN)
-"""
 import streamlit as st
-import json
-import uuid
-from datetime import date, datetime
-import plotly.graph_objects as go
-import plotly.express as px
 import pandas as pd
-import networkx as nx
-from auth import require_auth, render_user_bar, get_permission
+from datetime import datetime, date, timedelta
+import json
 
-# ─────────────────────────────────────────────
-# CONFIGURAÇÃO INICIAL
-# ─────────────────────────────────────────────
+# ── Page config ────────────────────────────────────────────
 st.set_page_config(
-    page_title="Business Modeling Studio",
-    page_icon="🏗️",
+    page_title="SE Suite 2.1 — Plano de Ação",
+    page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── AUTENTICAÇÃO — bloqueia tudo abaixo se não logado ────────────
-require_auth()
-
-# ─────────────────────────────────────────────
-# ESTADO GLOBAL (Session State)
-# ─────────────────────────────────────────────
-def init_state():
-    defaults = {
-        "company_name": "",
-        "vision": "",
-        "mission": "",
-        "goals": [],
-        "objectives": [],
-        "strategies": [],
-        "influencers": [],
-        "processes": [],
-        "activities": [],
-        "actors": [],
-        "raci": [],
-        "rules": [],
-        "decision_tables": [],
-        "glossary": [],
-        "active_module": "home",
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-init_state()
-
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
-def new_id():
-    return str(uuid.uuid4())[:8]
-
-def get_completeness():
-    """Calcula Business Model Completeness Score (0-100)"""
-    scores = {
-        "Motivação": 0,
-        "Processos": 0,
-        "Organização": 0,
-        "Regras": 0,
-    }
-    # Motivação (25 pts)
-    if st.session_state.vision: scores["Motivação"] += 5
-    if st.session_state.mission: scores["Motivação"] += 5
-    if st.session_state.goals: scores["Motivação"] += 8
-    if st.session_state.strategies: scores["Motivação"] += 7
-
-    # Processos (25 pts)
-    if st.session_state.processes: scores["Processos"] += 10
-    if st.session_state.activities: scores["Processos"] += 15
-
-    # Organização (25 pts)
-    if st.session_state.actors: scores["Organização"] += 12
-    if st.session_state.raci: scores["Organização"] += 13
-
-    # Regras (25 pts)
-    if st.session_state.rules: scores["Regras"] += 12
-    if st.session_state.glossary: scores["Regras"] += 8
-    if st.session_state.decision_tables: scores["Regras"] += 5
-
-    return scores
-
-def va_ratio():
-    activities = st.session_state.activities
-    if not activities: return 0, 0, 0
-    va = sum(1 for a in activities if a.get("value_type") == "VA")
-    nva = sum(1 for a in activities if a.get("value_type") == "NVA")
-    bva = sum(1 for a in activities if a.get("value_type") == "BVA")
-    return va, nva, bva
-
-# ─────────────────────────────────────────────
-# CSS CUSTOMIZADO
-# ─────────────────────────────────────────────
+# ── CSS ────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .main-header {
-        background: linear-gradient(135deg, #1e3a5f 0%, #2e6da4 100%);
-        color: white;
-        padding: 1.5rem 2rem;
-        border-radius: 12px;
-        margin-bottom: 1.5rem;
-    }
-    .module-card {
-        background: white;
-        border: 2px solid #e0e7ef;
-        border-radius: 12px;
-        padding: 1.2rem;
-        margin: 0.5rem 0;
-        transition: border-color 0.2s;
-    }
-    .module-card:hover { border-color: #2e6da4; }
-    .kpi-box {
-        background: linear-gradient(135deg, #f8faff, #eef4ff);
-        border-left: 4px solid #2e6da4;
-        border-radius: 8px;
-        padding: 0.8rem 1rem;
-        margin: 0.4rem 0;
-    }
-    .discipline-tag {
-        display: inline-block;
-        padding: 0.2rem 0.7rem;
-        border-radius: 20px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin: 0.15rem;
-    }
-    .tag-motivation { background:#fff3cd; color:#856404; }
-    .tag-process { background:#cce5ff; color:#004085; }
-    .tag-org { background:#d4edda; color:#155724; }
-    .tag-rules { background:#f8d7da; color:#721c24; }
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-    }
-    .score-badge {
-        font-size: 2.5rem;
-        font-weight: 800;
-        color: #2e6da4;
-    }
-    .sidebar-section {
-        background: #f0f4fa;
-        border-radius: 8px;
-        padding: 0.5rem;
-        margin-bottom: 0.5rem;
-    }
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
+
+html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
+
+.stApp { background: #0a0e1a; }
+
+/* Hero */
+.hero {
+    background: linear-gradient(135deg, #0d1628, #111827, #0a1020);
+    border: 1px solid #1a2235;
+    border-radius: 10px;
+    padding: 28px 36px;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+}
+.hero::after {
+    content: "SE SUITE 2.1";
+    position: absolute; right: -10px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 80px; font-weight: 700;
+    color: rgba(245,166,35,.04);
+    white-space: nowrap;
+    font-family: 'IBM Plex Mono', monospace;
+    pointer-events: none;
+}
+.hero-title { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 700; color: #f5a623; margin: 0 0 6px; }
+.hero-sub   { font-size: 13px; color: #8899aa; margin: 0 0 18px; }
+.hero-meta  { display: flex; gap: 28px; flex-wrap: wrap; }
+.meta-item  { display: flex; flex-direction: column; gap: 2px; }
+.meta-label { font-size: 9px; color: #8899aa; letter-spacing: .12em; text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; }
+.meta-val   { font-size: 12px; color: #e8f0f8; font-family: 'IBM Plex Mono', monospace; }
+
+/* KPI cards */
+.kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 20px; }
+.kpi-card { background: #111827; border: 1px solid #1a2235; border-radius: 6px; padding: 14px 18px; }
+.kpi-val  { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 700; line-height: 1; }
+.kpi-lbl  { font-size: 10px; color: #8899aa; letter-spacing: .08em; text-transform: uppercase; margin-top: 4px; }
+.kpi-blue { color: #00d4ff; } .kpi-green { color: #00e676; }
+.kpi-amber{ color: #f5a623; } .kpi-red   { color: #ff5252; }
+.kpi-muted{ color: #8899aa; }
+
+/* Badges */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 2px;
+         font-size: 10px; font-family: 'IBM Plex Mono', monospace; font-weight: 600; white-space: nowrap; }
+.b-pend { background: rgba(136,153,170,.1); color: #8899aa;  border: 1px solid rgba(136,153,170,.2); }
+.b-wip  { background: rgba(245,166,35,.12); color: #f5a623;  border: 1px solid rgba(245,166,35,.3); }
+.b-done { background: rgba(0,230,118,.12);  color: #00e676;  border: 1px solid rgba(0,230,118,.25); }
+.b-blk  { background: rgba(255,82,82,.12);  color: #ff5252;  border: 1px solid rgba(255,82,82,.25); }
+
+/* Resp tags */
+.rt { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 2px;
+      font-size: 10px; font-family: 'IBM Plex Mono', monospace; }
+
+/* Section headers */
+.sec-hdr { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 700;
+           color: #e8f0f8; padding-bottom: 10px; border-bottom: 1px solid #1a2235; margin-bottom: 16px; }
+.sec-sub  { font-size: 10px; color: #8899aa; font-weight: 400; margin-left: 8px; }
+
+/* Tables */
+.se-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.se-tbl thead tr { background: #111827; border-bottom: 2px solid #f5a623; }
+.se-tbl th { padding: 9px 12px; text-align: left; font-family: 'IBM Plex Mono', monospace;
+             font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: #f5a623; }
+.se-tbl tbody tr { border-bottom: 1px solid #111827; }
+.se-tbl tbody tr:hover { background: rgba(0,212,255,.04); }
+.se-tbl td { padding: 8px 12px; color: #c8d8e8; vertical-align: middle; }
+
+/* Progress bar */
+.pbar-wrap { display: flex; align-items: center; gap: 8px; }
+.pbar-track { flex: 1; height: 6px; background: #1a2235; border-radius: 1px; overflow: hidden; min-width: 80px; }
+.pbar-fill  { height: 100%; border-radius: 1px; }
+.pbar-pct   { font-family: 'IBM Plex Mono', monospace; font-size: 10px; min-width: 30px; text-align: right; }
+
+/* Timeline bar */
+.tl-track { height: 18px; background: #1a2235; border-radius: 2px; position: relative; overflow: hidden; }
+.tl-fill  { height: 100%; border-radius: 2px; position: absolute;
+            display: flex; align-items: center; padding: 0 5px;
+            font-family: 'IBM Plex Mono', monospace; font-size: 8px;
+            color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; }
+.bar-pend { background: linear-gradient(90deg, #1F4E79, #2E75B6); }
+.bar-done { background: linear-gradient(90deg, #1a5c35, #00e676); }
+.bar-wip  { background: linear-gradient(90deg, #5c3a0a, #f5a623); }
+.bar-blk  { background: linear-gradient(90deg, #5c0a0a, #ff5252); }
+
+/* Callout boxes */
+.callout { border-left: 3px solid; padding: 10px 14px; margin: 12px 0; border-radius: 0 4px 4px 0; font-size: 12px; }
+.c-warn { border-color: #f5a623; background: rgba(245,166,35,.06); color: #c8d8e8; }
+.c-info { border-color: #00d4ff; background: rgba(0,212,255,.05); color: #c8d8e8; }
+.c-ok   { border-color: #00e676; background: rgba(0,230,118,.05); color: #c8d8e8; }
+.callout b { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; display: block; margin-bottom: 4px; }
+.c-warn b { color: #f5a623; } .c-info b { color: #00d4ff; } .c-ok b { color: #00e676; }
+
+/* Bloco de bloqueio */
+.blk-box { background: rgba(255,82,82,.06); border: 1px solid rgba(255,82,82,.2);
+           border-left: 3px solid #ff5252; padding: 10px 14px; margin: 6px 0;
+           border-radius: 0 4px 4px 0; font-size: 12px; }
+.blk-id   { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #ff5252;
+            letter-spacing: .12em; text-transform: uppercase; margin-bottom: 3px; }
+.blk-body { color: #c8d8e8; }
+
+/* Sidebar */
+section[data-testid="stSidebar"] { background: #111827 !important; border-right: 1px solid #1a2235; }
+section[data-testid="stSidebar"] .stSelectbox label { color: #8899aa !important; font-size: 11px !important; }
+
+/* Remove default streamlit padding */
+.block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
+
+/* Hide streamlit branding */
+#MainMenu, footer, header { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# SIDEBAR — NAVEGAÇÃO
-# ─────────────────────────────────────────────
+
+# ── Data ───────────────────────────────────────────────────
+TASKS_RAW = [
+    ("Pre-Instalacao", "T01", "Definir modalidade de hospedagem",              "Gestor TI", "2025-02-03", "2025-02-05", "pendente",      ""),
+    ("Pre-Instalacao", "T02", "Estimar usuarios simultaneos",                  "Gestor TI", "2025-02-03", "2025-02-05", "pendente",      ""),
+    ("Pre-Instalacao", "T03", "Escolher SGBD (SQL Server recomendado)",        "DBA",       "2025-02-04", "2025-02-05", "pendente",      ""),
+    ("Pre-Instalacao", "T04", "Provisionar servidor de aplicacao (dedicado)",  "Infra",     "2025-02-05", "2025-02-07", "pendente",      ""),
+    ("Pre-Instalacao", "T05", "Provisionar servidor de BD (dedicado)",         "DBA",       "2025-02-05", "2025-02-07", "pendente",      ""),
+    ("Pre-Instalacao", "T06", "Obter certificado HTTPS",                       "Seguranca", "2025-02-06", "2025-02-08", "pendente",      ""),
+    ("SO e Stack",     "T07", "Instalar SO Linux 64-bit no srv. de aplicacao", "SysAdmin",  "2025-02-10", "2025-02-11", "pendente",      ""),
+    ("SO e Stack",     "T08", "Instalar dependencias Linux",                   "SysAdmin",  "2025-02-11", "2025-02-12", "pendente",      ""),
+    ("SO e Stack",     "T09", "Compilar e instalar NGinx 1.20 da fonte",       "SysAdmin",  "2025-02-12", "2025-02-13", "pendente",      "NGinx deve ser compilado da fonte — pacotes RPM/DEB NAO sao compativeis"),
+    ("SO e Stack",     "T10", "Instalar Java 8 AdoptOpenJDK HotSpot JDK",     "SysAdmin",  "2025-02-12", "2025-02-12", "pendente",      ""),
+    ("SO e Stack",     "T11", "Instalar Apache Tomcat 9.x",                    "SysAdmin",  "2025-02-13", "2025-02-13", "pendente",      ""),
+    ("SO e Stack",     "T12", "Instalar PHP 7.4",                              "SysAdmin",  "2025-02-13", "2025-02-13", "pendente",      ""),
+    ("SO e Stack",     "T13", "Copiar fontes TTF Arial e Verdana",             "SysAdmin",  "2025-02-13", "2025-02-13", "pendente",      ""),
+    ("Banco de Dados", "T14", "Instalar SO no servidor de BD",                 "DBA",       "2025-02-10", "2025-02-11", "pendente",      ""),
+    ("Banco de Dados", "T15", "Instalar e configurar SQL Server",              "DBA",       "2025-02-11", "2025-02-12", "pendente",      ""),
+    ("Banco de Dados", "T16", "Configurar collation CI_AI no SQL Server",      "DBA",       "2025-02-12", "2025-02-12", "pendente",      ""),
+    ("Banco de Dados", "T17", "Executar comandos Snapshot Isolation",          "DBA",       "2025-02-12", "2025-02-12", "pendente",      "Executar SEM conexoes ativas no banco de dados"),
+    ("Banco de Dados", "T18", "Instalar client do BD no srv. de aplicacao",   "DBA",       "2025-02-13", "2025-02-13", "pendente",      ""),
+    ("SE Suite",       "T19", "Executar instalador SE Suite 2.1",              "SysAdmin",  "2025-02-14", "2025-02-14", "pendente",      ""),
+    ("SE Suite",       "T20", "Verificar scripts SQL na instalacao",           "DBA",       "2025-02-14", "2025-02-14", "pendente",      "Instalacao so e concluida se TODOS os scripts SQL forem bem-sucedidos"),
+    ("SE Suite",       "T21", "Verificar Elasticsearch 6.8.3 ativo e plugin", "SysAdmin",  "2025-02-14", "2025-02-14", "pendente",      ""),
+    ("SE Suite",       "T22", "Instalar SE FileManager em servidor dedicado",  "Infra",     "2025-02-14", "2025-02-15", "pendente",      "FileManager exige servidor DEDICADO — nao instalar outros servicos junto"),
+    ("Seguranca",      "T23", "Configurar certificado SSL/HTTPS no NGinx",     "Seguranca", "2025-02-17", "2025-02-17", "pendente",      ""),
+    ("Seguranca",      "T24", "Configurar firewall e excecoes de antivirus",   "Seguranca", "2025-02-17", "2025-02-17", "pendente",      ""),
+    ("Seguranca",      "T25", "Integrar Active Directory / LDAP",              "TI",        "2025-02-18", "2025-02-19", "pendente",      ""),
+    ("Seguranca",      "T26", "Configurar SMTP/SSL para e-mail",               "TI",        "2025-02-18", "2025-02-18", "pendente",      ""),
+    ("Validacao",      "T27", "Acessar SE Suite via HTTPS no Chrome",          "TI",        "2025-02-20", "2025-02-20", "pendente",      ""),
+    ("Validacao",      "T28", "Testar login e funcionalidades basicas",        "TI",        "2025-02-20", "2025-02-20", "pendente",      ""),
+    ("Validacao",      "T29", "Testar conversao de documentos para PDF",       "TI",        "2025-02-20", "2025-02-20", "pendente",      ""),
+    ("Validacao",      "T30", "Testar acesso via dispositivo movel",           "TI",        "2025-02-20", "2025-02-20", "pendente",      ""),
+    ("Validacao",      "T31", "Testar envio de e-mail de notificacao",         "TI",        "2025-02-20", "2025-02-20", "pendente",      ""),
+    ("Validacao",      "T32", "Configurar backup do banco de dados",           "DBA",       "2025-02-21", "2025-02-21", "pendente",      ""),
+    ("Validacao",      "T33", "Configurar monitoramento de performance",       "TI",        "2025-02-21", "2025-02-21", "pendente",      ""),
+    ("Entrega",        "T34", "Documentar credenciais e acesso",               "Consultor", "2025-02-24", "2025-02-24", "pendente",      ""),
+    ("Entrega",        "T35", "Treinar equipe de usuarios-chave",              "Consultor", "2025-02-24", "2025-02-25", "pendente",      ""),
+]
+
+DEPS = {
+    "T03": ["T01"], "T04": ["T01", "T02"], "T05": ["T03"],
+    "T06": ["T04"], "T07": ["T04"], "T08": ["T07"],
+    "T09": ["T08"], "T10": ["T07"], "T11": ["T10"],
+    "T12": ["T11"], "T13": ["T07"], "T14": ["T05"],
+    "T15": ["T14"], "T16": ["T15"], "T17": ["T16"],
+    "T18": ["T15", "T11"], "T19": ["T12", "T13", "T18"],
+    "T20": ["T19"], "T21": ["T19"], "T22": ["T19"],
+    "T23": ["T06", "T21"], "T24": ["T23"],
+    "T25": ["T23"], "T26": ["T23"],
+    "T27": ["T23", "T24"], "T28": ["T27"],
+    "T29": ["T28"], "T30": ["T28"], "T31": ["T26", "T28"],
+    "T32": ["T27"], "T33": ["T27"],
+    "T34": ["T28"], "T35": ["T34"],
+}
+
+FASES      = ["Pre-Instalacao", "SO e Stack", "Banco de Dados", "SE Suite", "Seguranca", "Validacao", "Entrega"]
+RESP_LIST  = ["Gestor TI", "DBA", "Infra", "SysAdmin", "Seguranca", "TI", "Consultor"]
+STATUS_OPT = ["pendente", "em andamento", "concluido", "bloqueado"]
+
+RESP_COLORS = {
+    "Gestor TI": "#2E75B6", "DBA": "#C55A11",    "Infra":     "#7030A0",
+    "SysAdmin":  "#375623", "Seguranca": "#833C0B", "TI": "#1F4E79", "Consultor": "#4472C4",
+}
+
+# ── Session state ──────────────────────────────────────────
+if "task_state" not in st.session_state:
+    st.session_state.task_state = {
+        t[1]: {"status": t[6], "aviso": t[7]} for t in TASKS_RAW
+    }
+
+ts = st.session_state.task_state
+
+
+# ── Helper functions ───────────────────────────────────────
+def sbadge(s):
+    m = {
+        "pendente":     ("b-pend", "◯ pendente"),
+        "em andamento": ("b-wip",  "⟳ em andamento"),
+        "concluido":    ("b-done", "✓ concluido"),
+        "bloqueado":    ("b-blk",  "✗ bloqueado"),
+    }
+    cls, lbl = m.get(s, ("b-pend", s))
+    return f'<span class="badge {cls}">{lbl}</span>'
+
+def rtag(r):
+    c = RESP_COLORS.get(r, "#8899aa")
+    return f'<span class="rt" style="background:{c}22;border:1px solid {c}55;color:{c}">{r}</span>'
+
+def pbar(pct, color="#00e676"):
+    return (
+        f'<div class="pbar-wrap">'
+        f'<div class="pbar-track"><div class="pbar-fill" style="width:{pct}%;background:{color}"></div></div>'
+        f'<span class="pbar-pct" style="color:{color}">{pct}%</span>'
+        f'</div>'
+    )
+
+def get_kpis():
+    vals  = list(ts.values())
+    total = len(vals)
+    done  = sum(1 for v in vals if v["status"] == "concluido")
+    wip   = sum(1 for v in vals if v["status"] == "em andamento")
+    blk   = sum(1 for v in vals if v["status"] == "bloqueado")
+    pend  = sum(1 for v in vals if v["status"] == "pendente")
+    pct   = int(done / total * 100) if total else 0
+    return total, done, wip, blk, pend, pct
+
+
+# ── Sidebar ────────────────────────────────────────────────
 with st.sidebar:
-    render_user_bar()   # ← bloco do usuário logado + botão logout
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,400&family=Outfit:wght@300;400;500;600&display=swap');
-    </style>
-    <div style="padding: 0.3rem 0 1rem;">
-        <div style="font-family:'Cormorant Garamond',serif; font-size:1.6rem; font-weight:300; color:#f5f0e8; line-height:1;">
-            <span style="color:#c9a84c; font-weight:600; font-style:italic;">b</span>Valor<span style="font-family:'Outfit',sans-serif; font-size:0.45em; color:#4dd9c0; vertical-align:super; font-weight:500;">.ai</span>
-        </div>
-        <div style="font-size:0.65rem; letter-spacing:2px; text-transform:uppercase; color:rgba(184,200,216,0.35); margin-top:0.2rem;">Business Modeling Studio</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div style="font-family:IBM Plex Mono,monospace;font-size:13px;font-weight:700;color:#f5a623;padding:8px 0 16px">SE Suite 2.1</div>', unsafe_allow_html=True)
+    pagina = st.radio(
+        "Navegação",
+        ["📊 Dashboard", "📋 Tarefas", "📅 Timeline", "🔴 Bloqueios", "✏️ Atualizar"],
+        label_visibility="collapsed",
+    )
     st.divider()
 
-    company = st.text_input("🏢 Empresa", value=st.session_state.company_name, key="co_input")
-    if company != st.session_state.company_name:
-        st.session_state.company_name = company
-
+    # Mini-progresso no sidebar
+    total, done, wip, blk, pend, pct = get_kpis()
+    st.markdown(f'<div style="font-size:10px;color:#8899aa;font-family:IBM Plex Mono,monospace;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">Progresso Geral</div>', unsafe_allow_html=True)
+    st.progress(pct / 100)
+    st.markdown(f'<div style="font-family:IBM Plex Mono,monospace;font-size:12px;color:#00e676">{pct}% — {done}/{total} tarefas</div>', unsafe_allow_html=True)
     st.divider()
-    st.markdown("### Módulos")
-    nav_items = [
-        ("🏠", "home", "Dashboard"),
-        ("🎯", "motivation", "1. Motivação (BMM)"),
-        ("⚙️", "process", "2. Processos (BPMN)"),
-        ("👥", "organization", "3. Organização"),
-        ("📋", "rules", "4. Regras (SBVR/DMN)"),
-        ("📊", "dashboard", "5. Value Dashboard"),
-        ("🔗", "traceability", "6. Rastreabilidade"),
-    ]
-    for icon, key, label in nav_items:
-        if st.button(f"{icon} {label}", use_container_width=True,
-                     type="primary" if st.session_state.active_module == key else "secondary"):
-            st.session_state.active_module = key
-            st.rerun()
 
-    st.divider()
-    # Quick stats
-    scores = get_completeness()
-    total = sum(scores.values())
-    st.markdown(f"**Completude:** `{total:.0f}/100`")
-    st.progress(total / 100)
-    st.caption("Baseado em: Bridgeland & Zahavi (2009)")
-
-# ─────────────────────────────────────────────
-# HOME — PÁGINA INICIAL
-# ─────────────────────────────────────────────
-if st.session_state.active_module == "home":
-    name = st.session_state.company_name or "sua empresa"
-    st.markdown(f"""
-    <div class="main-header">
-        <h1>🏗️ Business Modeling Studio</h1>
-        <p style="margin:0; opacity:0.9">Modelagem de Negócios para Realização de Valor — {name}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    ### O que é Business Modeling?
-    Segundo **Bridgeland & Zahavi (2009)**, business modeling é a arte de criar representações
-    simplificadas de uma organização usando **quatro disciplinas complementares**:
-    """)
-
-    col1, col2, col3, col4 = st.columns(4)
-    disciplines = [
-        (col1, "🎯", "Motivação", "BMM v1.3", "Por quê? — Visão, Missão, Metas, Estratégias", "#fff3cd", "#856404"),
-        (col2, "⚙️", "Processos", "BPMN 2.0.2", "Como? — Atividades, fluxos, swimlanes", "#cce5ff", "#004085"),
-        (col3, "👥", "Organização", "ArchiMate 3.2", "Quem? — Atores, papéis, RACI", "#d4edda", "#155724"),
-        (col4, "📋", "Regras", "SBVR/DMN 1.5", "O quê? — Políticas, decisões, vocabulário", "#f8d7da", "#721c24"),
-    ]
-    for col, icon, title, std, desc, bg, fg in disciplines:
-        with col:
-            st.markdown(f"""
-            <div style="background:{bg}; color:{fg}; border-radius:12px; padding:1rem; height:180px;">
-                <div style="font-size:2rem;">{icon}</div>
-                <h4 style="margin:0.3rem 0;">{title}</h4>
-                <small><b>{std}</b></small>
-                <p style="font-size:0.85rem; margin-top:0.5rem;">{desc}</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.divider()
-    st.markdown("### 📈 Status do Modelo de Negócio")
-    scores = get_completeness()
-    total = sum(scores.values())
-
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.markdown(f"""
-        <div style="text-align:center; padding:2rem; background:#f0f7ff; border-radius:12px;">
-            <div class="score-badge">{total:.0f}</div>
-            <div style="color:#666;">/ 100 pontos</div>
-            <div style="margin-top:0.5rem; font-weight:600; color:#2e6da4;">
-            {"🟢 Avançado" if total>=75 else "🟡 Em desenvolvimento" if total>=40 else "🔴 Inicial"}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        fig = go.Figure(go.Bar(
-            x=list(scores.values()),
-            y=list(scores.keys()),
-            orientation='h',
-            marker_color=['#ffc107','#0d6efd','#198754','#dc3545'],
-            text=[f"{v}/25" for v in scores.values()],
-            textposition='inside',
-        ))
-        fig.update_layout(
-            height=200, margin=dict(l=0,r=0,t=10,b=10),
-            xaxis_range=[0,25], xaxis_title="Pontos",
-            plot_bgcolor='rgba(0,0,0,0)',
+    # Legenda de responsáveis
+    st.markdown('<div style="font-size:10px;color:#8899aa;font-family:IBM Plex Mono,monospace;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Responsáveis</div>', unsafe_allow_html=True)
+    for resp, color in RESP_COLORS.items():
+        tasks_resp = [t for t in TASKS_RAW if t[3] == resp]
+        done_resp  = sum(1 for t in tasks_resp if ts[t[1]]["status"] == "concluido")
+        st.markdown(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">'
+            f'<span style="font-size:11px;color:{color};font-family:IBM Plex Mono,monospace">{resp}</span>'
+            f'<span style="font-size:10px;color:#8899aa;font-family:IBM Plex Mono,monospace">{done_resp}/{len(tasks_resp)}</span>'
+            f'</div>',
+            unsafe_allow_html=True
         )
-        st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-    st.markdown("### 🚀 Por onde começar?")
-    st.info("""
-    **Fluxo recomendado** (Bridgeland & Zahavi, Cap. 7-9):
-    1. **Motivação** — Defina Visão, Missão, Metas e Estratégias
-    2. **Processos** — Mapeie como o negócio opera (BPMN 2.0)
-    3. **Organização** — Defina quem faz o quê (RACI)
-    4. **Regras** — Documente políticas e decisões (SBVR/DMN)
-    5. **Dashboard** — Analise a realização de valor
-    """)
+    st.markdown('<div style="font-size:9px;color:#8899aa;font-family:IBM Plex Mono,monospace">DT21.PT0002 Rev 19<br>Atualizado: ' + datetime.now().strftime("%d/%m/%Y %H:%M") + '</div>', unsafe_allow_html=True)
 
-    st.caption("📚 Referências: BMM v1.3 | BPMN 2.0.2 | SBVR v1.5 | DMN 1.5 | ArchiMate 3.2 | APQC PCF v7.3")
 
-# ─────────────────────────────────────────────
-# MÓDULO 1 — MOTIVAÇÃO (BMM)
-# ─────────────────────────────────────────────
-elif st.session_state.active_module == "motivation":
-    st.markdown("""
-    <div class="main-header">
-        <h2>🎯 Módulo 1: Business Motivation Model</h2>
-        <p style="margin:0; opacity:0.9">OMG BMM v1.3 — Visão, Missão, Metas, Estratégias, Influenciadores</p>
-    </div>
-    """, unsafe_allow_html=True)
+# ── Hero ───────────────────────────────────────────────────
+total, done, wip, blk, pend, pct = get_kpis()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🔭 Visão & Missão", "🎯 Metas & Objetivos", "🗺️ Estratégias & Táticas", "🌍 Influenciadores"])
+st.markdown(f"""
+<div class="hero">
+  <div class="hero-title">SE Suite 2.1 — Plano de Ação</div>
+  <div class="hero-sub">SoftExpert Excellence Suite · Equipe mista · DT21.PT0002 Rev 19</div>
+  <div class="hero-meta">
+    <div class="meta-item"><span class="meta-label">Início</span><span class="meta-val">03/02/2025</span></div>
+    <div class="meta-item"><span class="meta-label">Fim</span><span class="meta-val">25/02/2025</span></div>
+    <div class="meta-item"><span class="meta-label">Progresso</span><span class="meta-val" style="color:#00e676">{pct}% ({done}/{total})</span></div>
+    <div class="meta-item"><span class="meta-label">Em Andamento</span><span class="meta-val" style="color:#f5a623">{wip}</span></div>
+    <div class="meta-item"><span class="meta-label">Bloqueadas</span><span class="meta-val" style="color:#ff5252">{blk}</span></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-    with tab1:
-        st.markdown("#### 🔭 Visão & Missão")
-        st.info("**BMM:** A *Vision* descreve o estado futuro desejado. A *Mission* descreve o que a organização faz para alcançar a visão.")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("##### 🌟 Visão")
-            vision = st.text_area(
-                "Declaração de Visão",
-                value=st.session_state.vision,
-                placeholder="Ex: Ser a empresa de restaurantes mais admirada dos EUA, reconhecida pela experiência gastronômica excepcional.",
-                height=120, key="vision_input"
+# KPIs
+st.markdown(f"""
+<div class="kpi-grid">
+  <div class="kpi-card"><div class="kpi-val kpi-blue">{total}</div><div class="kpi-lbl">Total</div></div>
+  <div class="kpi-card"><div class="kpi-val kpi-green">{done}</div><div class="kpi-lbl">Concluídas</div></div>
+  <div class="kpi-card"><div class="kpi-val kpi-amber">{wip}</div><div class="kpi-lbl">Em Andamento</div></div>
+  <div class="kpi-card"><div class="kpi-val kpi-red">{blk}</div><div class="kpi-lbl">Bloqueadas</div></div>
+  <div class="kpi-card"><div class="kpi-val kpi-muted">{pend}</div><div class="kpi-lbl">Pendentes</div></div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════
+# DASHBOARD
+# ══════════════════════════════════════════════════════════
+if pagina == "📊 Dashboard":
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown('<div class="sec-hdr">Por Fase</div>', unsafe_allow_html=True)
+        fase_rows = ""
+        for fase in FASES:
+            ftasks = [t for t in TASKS_RAW if t[0] == fase]
+            ftotal = len(ftasks)
+            fdone  = sum(1 for t in ftasks if ts[t[1]]["status"] == "concluido")
+            fwip   = sum(1 for t in ftasks if ts[t[1]]["status"] == "em andamento")
+            fblk   = sum(1 for t in ftasks if ts[t[1]]["status"] == "bloqueado")
+            fpend  = ftotal - fdone - fwip - fblk
+            fpct   = int(fdone / ftotal * 100) if ftotal else 0
+            fase_rows += (
+                f"<tr>"
+                f"<td><strong style='color:#e8f0f8'>{fase}</strong></td>"
+                f"<td style='font-family:IBM Plex Mono,monospace;text-align:center'>{ftotal}</td>"
+                f"<td style='text-align:center'>{sbadge('concluido')} {fdone}</td>"
+                f"<td style='text-align:center'>{sbadge('em andamento')} {fwip}</td>"
+                f"<td style='text-align:center'>{sbadge('bloqueado')} {fblk}</td>"
+                f"<td>{pbar(fpct)}</td>"
+                f"</tr>"
             )
-            st.session_state.vision = vision
-            if vision:
-                words = len(vision.split())
-                st.caption(f"✅ {words} palavras — {'Boa concisão' if words<=30 else 'Considere ser mais conciso' if words>50 else 'OK'}")
+        st.markdown(
+            f"<table class='se-tbl'><thead><tr>"
+            f"<th>Fase</th><th>Total</th><th>Concluído</th><th>Andamento</th><th>Bloqueado</th><th>Progresso</th>"
+            f"</tr></thead><tbody>{fase_rows}</tbody></table>",
+            unsafe_allow_html=True
+        )
 
-        with col2:
-            st.markdown("##### 🧭 Missão")
-            mission = st.text_area(
-                "Declaração de Missão",
-                value=st.session_state.mission,
-                placeholder="Ex: Criar experiências gastronômicas memoráveis em restaurantes de alto padrão, com foco em qualidade, serviço e sustentabilidade.",
-                height=120, key="mission_input"
+    with col2:
+        st.markdown('<div class="sec-hdr">Por Responsável</div>', unsafe_allow_html=True)
+        resp_rows = ""
+        for resp in RESP_LIST:
+            rtasks = [t for t in TASKS_RAW if t[3] == resp]
+            if not rtasks: continue
+            rtotal = len(rtasks)
+            rdone  = sum(1 for t in rtasks if ts[t[1]]["status"] == "concluido")
+            rblk   = sum(1 for t in rtasks if ts[t[1]]["status"] == "bloqueado")
+            rpct   = int(rdone / rtotal * 100) if rtotal else 0
+            blk_str = f" {sbadge('bloqueado')} {rblk}" if rblk else ""
+            resp_rows += (
+                f"<tr>"
+                f"<td>{rtag(resp)}</td>"
+                f"<td style='font-family:IBM Plex Mono,monospace;text-align:center'>{rtotal}</td>"
+                f"<td style='font-family:IBM Plex Mono,monospace;color:#00e676;text-align:center'>{rdone}</td>"
+                f"<td style='font-family:IBM Plex Mono,monospace;text-align:center'>{rtotal-rdone}</td>"
+                f"<td>{pbar(rpct, '#2E75B6')}{blk_str}</td>"
+                f"</tr>"
             )
-            st.session_state.mission = mission
+        st.markdown(
+            f"<table class='se-tbl'><thead><tr>"
+            f"<th>Responsável</th><th>Total</th><th>Feito</th><th>Restam</th><th>Progresso</th>"
+            f"</tr></thead><tbody>{resp_rows}</tbody></table>",
+            unsafe_allow_html=True
+        )
 
-        if vision and mission:
-            st.success("✅ Visão e Missão definidas. Próximo passo: defina as Metas.")
-            st.markdown("---")
-            st.markdown("##### 📋 Declarações Atuais")
-            st.markdown(f"**Visão:** *{vision}*")
-            st.markdown(f"**Missão:** *{mission}*")
+        st.markdown('<br><div class="sec-hdr">Bloqueios e Avisos Ativos</div>', unsafe_allow_html=True)
+        any_blk = False
+        for t in TASKS_RAW:
+            s = ts[t[1]]
+            if s["status"] == "bloqueado" or s["aviso"]:
+                any_blk = True
+                st.markdown(
+                    f'<div class="blk-box">'
+                    f'<div class="blk-id">{t[1]} — {t[2]}</div>'
+                    f'<div class="blk-body">{s["aviso"] if s["aviso"] else "Marcada como bloqueada"}</div>'
+                    f'<div style="margin-top:5px">{rtag(t[3])} &nbsp; {sbadge(s["status"])}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+        if not any_blk:
+            st.markdown('<div class="callout c-ok"><b>Status</b>Nenhum bloqueio ativo 🎉</div>', unsafe_allow_html=True)
 
-    with tab2:
-        st.markdown("#### 🎯 Metas e Objetivos SMART")
-        st.info("**BMM:** *Goals* são estados desejados de longo prazo. *Objectives* são SMART: Específicos, Mensuráveis, Alcançáveis, Relevantes e com Prazo.")
 
-        col_form, col_list = st.columns([1, 1])
-        with col_form:
-            st.markdown("##### ➕ Adicionar Meta")
-            goal_name = st.text_input("Nome da Meta", placeholder="Ex: Crescimento de Receita")
-            goal_cat = st.selectbox("Perspectiva (Balanced Scorecard)", 
-                                     ["Financeiro", "Cliente", "Processos Internos", "Aprendizado & Crescimento"])
-            goal_desc = st.text_area("Descrição", placeholder="Ex: Aumentar receita anual em mercados premium", height=80)
-            
-            st.markdown("##### 🎯 Objetivo SMART vinculado")
-            obj_specific = st.text_input("Específico (o quê?)", placeholder="Aumentar receita de restaurantes flagship")
-            obj_measurable = st.text_input("Mensurável (quanto?)", placeholder="Crescimento de 25% em faturamento")
-            obj_target = st.number_input("Meta numérica", value=0.0, format="%.1f")
-            obj_unit = st.text_input("Unidade", placeholder="% crescimento, R$, NPS...")
-            obj_date = st.date_input("Prazo", value=date(2026, 12, 31))
+# ══════════════════════════════════════════════════════════
+# TAREFAS
+# ══════════════════════════════════════════════════════════
+elif pagina == "📋 Tarefas":
+    st.markdown('<div class="sec-hdr">Tarefas <span class="sec-sub">Filtros abaixo</span></div>', unsafe_allow_html=True)
 
-            if get_permission("can_edit") and st.button("✅ Adicionar Meta", type="primary"):
-                if goal_name:
-                    goal_id = new_id()
-                    st.session_state.goals.append({
-                        "id": goal_id, "name": goal_name,
-                        "category": goal_cat, "description": goal_desc
-                    })
-                    if obj_specific:
-                        st.session_state.objectives.append({
-                            "id": new_id(), "goal_id": goal_id,
-                            "specific": obj_specific, "measurable": obj_measurable,
-                            "target": obj_target, "unit": obj_unit, "deadline": str(obj_date)
-                        })
-                    st.success(f"Meta '{goal_name}' adicionada!")
-                    st.rerun()
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        f_fase = st.selectbox("Fase", ["Todas"] + FASES)
+    with fc2:
+        f_resp = st.selectbox("Responsável", ["Todos"] + RESP_LIST)
+    with fc3:
+        f_status = st.selectbox("Status", ["Todos"] + STATUS_OPT)
 
-        with col_list:
-            st.markdown("##### 📊 Metas Definidas")
-            cat_colors = {"Financeiro":"🟡","Cliente":"🔵","Processos Internos":"🟢","Aprendizado & Crescimento":"🔴"}
-            if st.session_state.goals:
-                for g in st.session_state.goals:
-                    icon = cat_colors.get(g["category"], "⚪")
-                    with st.expander(f"{icon} {g['name']} — {g['category']}"):
-                        st.write(g.get("description",""))
-                        related_objs = [o for o in st.session_state.objectives if o["goal_id"] == g["id"]]
-                        for o in related_objs:
-                            st.markdown(f"""
-                            <div class="kpi-box">
-                                <b>Objetivo SMART:</b> {o['specific']}<br>
-                                <b>Meta:</b> {o['target']} {o['unit']} até {o['deadline']}
-                            </div>""", unsafe_allow_html=True)
-                        if get_permission("can_delete") and st.button(f"🗑️ Remover", key=f"del_goal_{g['id']}"):
-                            st.session_state.goals = [x for x in st.session_state.goals if x['id'] != g['id']]
-                            st.rerun()
-            else:
-                st.info("Nenhuma meta definida ainda.")
+    rows = ""
+    count = 0
+    for t in TASKS_RAW:
+        fase, tid, nome, resp, ini, fim = t[0], t[1], t[2], t[3], t[4], t[5]
+        s  = ts[tid]
+        st_ = s["status"]
+        aviso = s["aviso"]
+        deps = DEPS.get(tid, [])
 
-            # BSC Radar
-            if st.session_state.goals:
-                cats = ["Financeiro","Cliente","Processos Internos","Aprendizado & Crescimento"]
-                counts = [sum(1 for g in st.session_state.goals if g["category"]==c) for c in cats]
-                fig = go.Figure(go.Scatterpolar(r=counts, theta=cats, fill='toself',
-                    line_color='#2e6da4', fillcolor='rgba(46,109,164,0.2)'))
-                fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, max(counts)+1])),
-                    showlegend=False, height=250, margin=dict(l=30,r=30,t=30,b=30),
-                    title="Distribuição BSC")
-                st.plotly_chart(fig, use_container_width=True)
+        if f_fase   != "Todas" and fase != f_fase:   continue
+        if f_resp   != "Todos" and resp != f_resp:   continue
+        if f_status != "Todos" and st_  != f_status: continue
+        count += 1
 
-    with tab3:
-        st.markdown("#### 🗺️ Estratégias & Táticas")
-        st.info("**BMM:** *Strategies* são abordagens para alcançar Goals. *Tactics* são ações concretas para implementar Strategies.")
+        dep_str   = ", ".join(deps) if deps else "—"
+        warn_icon = ' <span style="color:#ff5252;font-size:10px" title="' + aviso + '">[!]</span>' if aviso else ""
+        rows += (
+            f"<tr>"
+            f"<td style='font-family:IBM Plex Mono,monospace;color:#8899aa'>{tid}</td>"
+            f"<td><strong style='color:#e8f0f8'>{nome}</strong>{warn_icon}</td>"
+            f"<td><span style='font-size:10px;color:#8899aa;font-family:IBM Plex Mono,monospace'>{fase}</span></td>"
+            f"<td>{rtag(resp)}</td>"
+            f"<td style='font-family:IBM Plex Mono,monospace;font-size:10px'>{ini}</td>"
+            f"<td style='font-family:IBM Plex Mono,monospace;font-size:10px'>{fim}</td>"
+            f"<td>{sbadge(st_)}</td>"
+            f"<td><span style='font-size:10px;color:#8899aa;font-family:IBM Plex Mono,monospace'>{dep_str}</span></td>"
+            f"</tr>"
+        )
 
-        col_f, col_l = st.columns([1,1])
-        with col_f:
-            st.markdown("##### ➕ Adicionar Estratégia")
-            strat_name = st.text_input("Estratégia", placeholder="Ex: Expansão para mercados premium costeiros")
-            strat_type = st.selectbox("Tipo Porter", ["Diferenciação", "Liderança em Custo", "Foco/Nicho"])
-            linked_goal = st.selectbox("Meta vinculada", 
-                                        ["(nenhuma)"] + [g["name"] for g in st.session_state.goals])
-            tactic = st.text_input("Tática associada", placeholder="Ex: Abrir 3 restaurantes em Miami até Q3 2026")
+    st.markdown(f'<div style="font-size:11px;color:#8899aa;font-family:IBM Plex Mono,monospace;margin-bottom:10px">{count} tarefa(s) exibida(s)</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"<table class='se-tbl'><thead><tr>"
+        f"<th>ID</th><th>Tarefa</th><th>Fase</th><th>Responsável</th><th>Início</th><th>Fim</th><th>Status</th><th>Depende de</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table>",
+        unsafe_allow_html=True
+    )
 
-            if st.button("✅ Adicionar Estratégia", type="primary"):
-                if strat_name:
-                    st.session_state.strategies.append({
-                        "id": new_id(), "name": strat_name, "type": strat_type,
-                        "goal": linked_goal, "tactic": tactic
-                    })
-                    st.success("Estratégia adicionada!")
-                    st.rerun()
 
-        with col_l:
-            st.markdown("##### 🗺️ Estratégias Definidas")
-            type_icons = {"Diferenciação":"💎","Liderança em Custo":"💰","Foco/Nicho":"🎯"}
-            for s in st.session_state.strategies:
-                icon = type_icons.get(s["type"],"📍")
-                st.markdown(f"""
-                <div class="module-card">
-                    <b>{icon} {s['name']}</b><br>
-                    <small>Tipo: {s['type']} | Meta: {s['goal']}</small><br>
-                    {f"<i>Tática:</i> {s['tactic']}" if s.get('tactic') else ""}
-                </div>""", unsafe_allow_html=True)
-            if not st.session_state.strategies:
-                st.info("Nenhuma estratégia definida.")
+# ══════════════════════════════════════════════════════════
+# TIMELINE
+# ══════════════════════════════════════════════════════════
+elif pagina == "📅 Timeline":
+    st.markdown('<div class="sec-hdr">Timeline <span class="sec-sub">03/02 → 25/02/2025 · Gantt</span></div>', unsafe_allow_html=True)
 
-    with tab4:
-        st.markdown("#### 🌍 Análise de Influenciadores (PESTEL + SWOT)")
-        st.info("**BMM:** Influenciadores são fatores externos e internos que afetam as metas e estratégias.")
+    START      = datetime(2025, 2, 3)
+    TOTAL_DAYS = 17
 
-        col_pestel, col_swot = st.columns(2)
-        with col_pestel:
-            st.markdown("##### 🔍 PESTEL")
-            pestel_cats = ["Político", "Econômico", "Social", "Tecnológico", "Ambiental", "Legal"]
-            pestel_factor = st.selectbox("Categoria", pestel_cats)
-            pestel_desc = st.text_area("Fator / Influenciador", height=80,
-                                        placeholder="Descreva o fator externo...")
-            pestel_impact = st.select_slider("Impacto", ["Baixo","Médio","Alto"])
+    header = "".join(
+        f'<th style="font-size:8px;color:#8899aa;padding:3px 1px;text-align:center;min-width:22px">'
+        f'{(START + timedelta(days=i)).strftime("%d/%m")}</th>'
+        for i in range(TOTAL_DAYS)
+    )
 
-            if st.button("➕ Adicionar Influenciador"):
-                if pestel_desc:
-                    st.session_state.influencers.append({
-                        "id": new_id(), "category": pestel_factor,
-                        "description": pestel_desc, "impact": pestel_impact, "type": "PESTEL"
-                    })
-                    st.rerun()
-
-        with col_swot:
-            st.markdown("##### 🎯 SWOT")
-            swot_cats = ["Força", "Fraqueza", "Oportunidade", "Ameaça"]
-            swot_cat = st.selectbox("Tipo SWOT", swot_cats)
-            swot_desc = st.text_area("Descrição", height=80, key="swot_desc")
-
-            if st.button("➕ Adicionar SWOT"):
-                if swot_desc:
-                    st.session_state.influencers.append({
-                        "id": new_id(), "category": swot_cat,
-                        "description": swot_desc, "type": "SWOT"
-                    })
-                    st.rerun()
-
-        # Visualização SWOT matrix
-        if st.session_state.influencers:
-            swot_items = [i for i in st.session_state.influencers if i["type"] == "SWOT"]
-            if swot_items:
-                st.markdown("##### 📊 Matriz SWOT")
-                swot_map = {"Força":[], "Fraqueza":[], "Oportunidade":[], "Ameaça":[]}
-                for i in swot_items:
-                    swot_map[i["category"]].append(i["description"])
-
-                s_col, w_col = st.columns(2)
-                o_col, t_col = st.columns(2)
-                quadrants = [(s_col,"Força","✅","#d4edda"),(w_col,"Fraqueza","⚠️","#fff3cd"),
-                             (o_col,"Oportunidade","🚀","#cce5ff"),(t_col,"Ameaça","🚨","#f8d7da")]
-                for col, cat, icon, bg in quadrants:
-                    with col:
-                        items = swot_map[cat]
-                        content = "".join([f"• {x}<br>" for x in items]) if items else "<i>Vazio</i>"
-                        st.markdown(f"""<div style="background:{bg};border-radius:8px;padding:0.8rem;">
-                            <b>{icon} {cat}</b><br>{content}</div>""", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────
-# MÓDULO 2 — PROCESSOS (BPMN)
-# ─────────────────────────────────────────────
-elif st.session_state.active_module == "process":
-    st.markdown("""
-    <div class="main-header">
-        <h2>⚙️ Módulo 2: Business Process Model</h2>
-        <p style="margin:0; opacity:0.9">BPMN 2.0.2 (ISO/IEC 19510:2013) — Processos, Atividades, Análise de Valor</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    tab1, tab2, tab3 = st.tabs(["📋 Processos", "🔄 Atividades & Fluxo", "📊 Análise de Valor"])
-
-    with tab1:
-        st.markdown("#### 📋 Catálogo de Processos")
-        st.info("**BPMN 2.0:** Um *Process* é um conjunto de atividades que produz resultado de valor para o cliente. Use *Pools* para organizações e *Lanes* para papéis.")
-
-        col_f, col_l = st.columns([1,1])
-        with col_f:
-            st.markdown("##### ➕ Novo Processo")
-            proc_name = st.text_input("Nome do Processo", placeholder="Ex: Reserva de Mesa")
-            proc_type = st.selectbox("Tipo BPMN", ["Process", "Sub-Process", "Call Activity"])
-            proc_trigger = st.selectbox("Evento Inicial", ["Cliente solicita", "Timer", "Mensagem recebida", "Manual", "Condicional"])
-            proc_goal = st.selectbox("Meta vinculada (BMM)",
-                                      ["(nenhuma)"] + [g["name"] for g in st.session_state.goals])
-            proc_level = st.selectbox("Nível (APQC PCF)", ["Nível 1 — Categoria", "Nível 2 — Grupo", "Nível 3 — Processo", "Nível 4 — Atividade"])
-
-            if st.button("✅ Adicionar Processo", type="primary"):
-                if proc_name:
-                    st.session_state.processes.append({
-                        "id": new_id(), "name": proc_name, "type": proc_type,
-                        "trigger": proc_trigger, "goal": proc_goal, "level": proc_level
-                    })
-                    st.success(f"Processo '{proc_name}' adicionado!")
-                    st.rerun()
-
-        with col_l:
-            st.markdown("##### 📋 Processos Mapeados")
-            if st.session_state.processes:
-                for p in st.session_state.processes:
-                    activities_for_proc = [a for a in st.session_state.activities if a.get("process_id") == p["id"]]
-                    with st.expander(f"⚙️ {p['name']} ({p['type']})"):
-                        st.write(f"**Gatilho:** {p['trigger']} | **Meta:** {p['goal']}")
-                        st.write(f"**Nível APQC:** {p['level']}")
-                        st.write(f"**Atividades:** {len(activities_for_proc)}")
-                        if get_permission("can_delete") and st.button("🗑️ Remover", key=f"del_proc_{p['id']}"):
-                            st.session_state.processes = [x for x in st.session_state.processes if x['id'] != p['id']]
-                            st.rerun()
-            else:
-                st.info("Nenhum processo mapeado. Adicione processos ao lado.")
-
-    with tab2:
-        st.markdown("#### 🔄 Atividades e Fluxo BPMN")
-        st.info("**BPMN 2.0:** *Tasks* são trabalho atômico. Classifique cada atividade por tipo de valor: **VA** (Valor Agregado), **NVA** (Não agrega valor — eliminar), **BVA** (Business Value-Added — necessário mas não percebido pelo cliente).")
-
-        if not st.session_state.processes:
-            st.warning("⚠️ Crie pelo menos um processo na aba anterior.")
-        else:
-            col_f, col_l = st.columns([1,1])
-            with col_f:
-                st.markdown("##### ➕ Nova Atividade")
-                act_process = st.selectbox("Processo", [p["name"] for p in st.session_state.processes])
-                act_name = st.text_input("Nome da Atividade", placeholder="Ex: Verificar disponibilidade")
-                act_type = st.selectbox("Tipo BPMN", ["Task","User Task","Service Task","Manual Task","Script Task","Sub-Process"])
-                act_value = st.radio("Classificação de Valor (Lean/BPM)", ["VA","NVA","BVA"], horizontal=True,
-                                      help="VA=Valor Agregado | NVA=Não Agrega | BVA=Necessário ao Negócio")
-                act_role = st.selectbox("Responsável", ["(nenhum)"] + [a["name"] for a in st.session_state.actors])
-                act_time = st.number_input("Tempo médio (minutos)", value=5, min_value=1)
-                act_rule = st.selectbox("Regra aplicável", ["(nenhuma)"] + [r["name"] for r in st.session_state.rules])
-
-                if st.button("✅ Adicionar Atividade", type="primary"):
-                    if act_name:
-                        proc_id = next((p["id"] for p in st.session_state.processes if p["name"] == act_process), None)
-                        st.session_state.activities.append({
-                            "id": new_id(), "name": act_name, "type": act_type,
-                            "value_type": act_value, "process_id": proc_id,
-                            "process_name": act_process, "role": act_role,
-                            "time_min": act_time, "rule": act_rule
-                        })
-                        st.success(f"Atividade '{act_name}' adicionada!")
-                        st.rerun()
-
-            with col_l:
-                st.markdown("##### 📊 Atividades por Processo")
-                if st.session_state.activities:
-                    proc_filter = st.selectbox("Filtrar por processo", 
-                                                ["Todos"] + [p["name"] for p in st.session_state.processes],
-                                                key="proc_filter_acts")
-                    acts = [a for a in st.session_state.activities if 
-                            proc_filter == "Todos" or a["process_name"] == proc_filter]
-
-                    value_colors = {"VA":"#d4edda","NVA":"#f8d7da","BVA":"#fff3cd"}
-                    value_labels = {"VA":"✅ VA","NVA":"❌ NVA","BVA":"⚠️ BVA"}
-                    for a in acts:
-                        bg = value_colors.get(a["value_type"],"#fff")
-                        label = value_labels.get(a["value_type"],"")
-                        st.markdown(f"""
-                        <div style="background:{bg};border-radius:8px;padding:0.6rem 0.8rem;margin:0.3rem 0;">
-                            <b>{a['name']}</b> <small>({a['type']})</small>
-                            <span style="float:right;font-weight:600;">{label}</span><br>
-                            <small>🔄 {a['process_name']} | 👤 {a['role']} | ⏱️ {a['time_min']}min</small>
-                        </div>""", unsafe_allow_html=True)
-                else:
-                    st.info("Nenhuma atividade cadastrada.")
-
-                # BPMN-like diagram via Mermaid text
-                if st.session_state.activities and st.session_state.processes:
-                    st.markdown("##### 🗺️ Fluxo do Processo (texto BPMN)")
-                    sel_proc = st.selectbox("Processo para visualizar", [p["name"] for p in st.session_state.processes], key="mermaid_proc")
-                    proc_acts = [a for a in st.session_state.activities if a["process_name"] == sel_proc]
-                    if proc_acts:
-                        mermaid_lines = ["flowchart LR", "    START([▶ Início])"]
-                        prev = "START"
-                        for i, a in enumerate(proc_acts):
-                            node_id = f"A{i}"
-                            shape_open = ">" if a["type"] == "Task" else "[["
-                            shape_close = "]" if a["type"] == "Task" else "]]"
-                            color = "style " + node_id + (" fill:#d4edda" if a["value_type"]=="VA" else " fill:#f8d7da" if a["value_type"]=="NVA" else " fill:#fff3cd")
-                            mermaid_lines.append(f"    {node_id}[\"{a['name']}\"]")
-                            mermaid_lines.append(f"    {color}")
-                            mermaid_lines.append(f"    {prev} --> {node_id}")
-                            prev = node_id
-                        mermaid_lines.append("    END([⏹ Fim])")
-                        mermaid_lines.append(f"    {prev} --> END")
-                        mermaid_code = "\n".join(mermaid_lines)
-                        st.code(mermaid_code, language="text")
-                        st.caption("💡 Cole este código em https://mermaid.live para visualizar")
-
-    with tab3:
-        st.markdown("#### 📊 Análise de Valor Agregado")
-        st.info("Metodologia Lean BPM: classifique atividades em VA (Valor para Cliente), BVA (Necessário ao Negócio) e NVA (Desperdício — eliminar).")
-
-        va, nva, bva = va_ratio()
-        total_acts = va + nva + bva
-
-        if total_acts == 0:
-            st.warning("Adicione atividades na aba anterior para ver a análise de valor.")
-        else:
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total de Atividades", total_acts)
-            col2.metric("✅ Valor Agregado (VA)", va, f"{va/total_acts:.0%}")
-            col3.metric("⚠️ Necessário (BVA)", bva, f"{bva/total_acts:.0%}")
-            col4.metric("❌ Desperdício (NVA)", nva, f"{nva/total_acts:.0%}", delta_color="inverse")
-
-            fig = go.Figure(go.Pie(
-                labels=["VA — Valor Agregado", "BVA — Valor de Negócio", "NVA — Não Agrega Valor"],
-                values=[va, bva, nva],
-                marker_colors=["#198754","#ffc107","#dc3545"],
-                hole=0.45,
-                textinfo='label+percent'
-            ))
-            fig.update_layout(height=350, showlegend=True, margin=dict(l=20,r=20,t=20,b=20))
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Tempo total
-            total_time = sum(a.get("time_min", 0) for a in st.session_state.activities)
-            va_time = sum(a.get("time_min", 0) for a in st.session_state.activities if a.get("value_type") == "VA")
-            if total_time > 0:
-                st.metric("⏱️ Eficiência de Tempo (VA)", f"{va_time/total_time:.0%}", 
-                           help="% do tempo total gasto em atividades que agregam valor")
-
-            if nva > 0:
-                st.warning(f"⚡ **Oportunidade de melhoria:** {nva} atividades NVA identificadas. Considere eliminá-las para aumentar a eficiência do processo.")
-
-# ─────────────────────────────────────────────
-# MÓDULO 3 — ORGANIZAÇÃO
-# ─────────────────────────────────────────────
-elif st.session_state.active_module == "organization":
-    st.markdown("""
-    <div class="main-header">
-        <h2>👥 Módulo 3: Business Organization Model</h2>
-        <p style="margin:0; opacity:0.9">ArchiMate 3.2 Business Layer — Atores, Papéis, RACI, Stakeholders</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    tab1, tab2, tab3 = st.tabs(["👤 Atores & Papéis", "📋 Matriz RACI", "🎯 Stakeholder Map"])
-
-    with tab1:
-        col_f, col_l = st.columns([1,1])
-        with col_f:
-            st.markdown("##### ➕ Novo Ator")
-            actor_name = st.text_input("Nome", placeholder="Ex: Gerente de Operações")
-            actor_type = st.selectbox("Tipo", ["Interno", "Externo", "Sistema", "Parceiro"])
-            actor_roles = st.text_input("Papéis", placeholder="Aprovador, Revisor, Executor...")
-            actor_dept = st.text_input("Departamento/Área", placeholder="Ex: Operações")
-
-            if st.button("✅ Adicionar Ator", type="primary"):
-                if actor_name:
-                    st.session_state.actors.append({
-                        "id": new_id(), "name": actor_name, "type": actor_type,
-                        "roles": actor_roles, "department": actor_dept
-                    })
-                    st.success(f"Ator '{actor_name}' adicionado!")
-                    st.rerun()
-
-        with col_l:
-            st.markdown("##### 👥 Atores Registrados")
-            type_icons = {"Interno":"🏢","Externo":"🌐","Sistema":"💻","Parceiro":"🤝"}
-            if st.session_state.actors:
-                for a in st.session_state.actors:
-                    icon = type_icons.get(a["type"],"👤")
-                    st.markdown(f"""
-                    <div class="module-card">
-                        <b>{icon} {a['name']}</b> <small>({a['type']})</small><br>
-                        <small>Dept: {a.get('department','—')} | Papéis: {a.get('roles','—')}</small>
-                    </div>""", unsafe_allow_html=True)
-            else:
-                st.info("Nenhum ator definido.")
-
-        # Org chart visualization
-        if st.session_state.actors:
-            internal = [a for a in st.session_state.actors if a["type"] == "Interno"]
-            external = [a for a in st.session_state.actors if a["type"] != "Interno"]
-            
-            fig = go.Figure()
-            cols_int = len(internal)
-            for i, a in enumerate(internal):
-                fig.add_trace(go.Scatter(
-                    x=[i], y=[1], mode='markers+text',
-                    marker=dict(size=50, color='#2e6da4', symbol='square'),
-                    text=[a['name'][:15]], textposition='bottom center',
-                    name=a['name'], showlegend=False
-                ))
-            for i, a in enumerate(external):
-                fig.add_trace(go.Scatter(
-                    x=[i], y=[0], mode='markers+text',
-                    marker=dict(size=40, color='#6c757d', symbol='circle'),
-                    text=[a['name'][:15]], textposition='bottom center',
-                    name=a['name'], showlegend=False
-                ))
-            fig.update_layout(
-                height=250, xaxis=dict(showticklabels=False), 
-                yaxis=dict(showticklabels=False, tickvals=[0,1], ticktext=["Externos","Internos"]),
-                title="Mapa de Atores", margin=dict(l=20,r=20,t=40,b=40),
-                plot_bgcolor='rgba(240,247,255,0.5)'
+    rows = ""
+    for fase in FASES:
+        rows += (
+            f'<tr><td colspan="{TOTAL_DAYS + 2}" style="padding:6px 11px 2px;'
+            f'font-family:IBM Plex Mono,monospace;font-size:9px;color:#f5a623;'
+            f'letter-spacing:.1em;text-transform:uppercase;background:#111827">{fase}</td></tr>'
+        )
+        for t in TASKS_RAW:
+            if t[0] != fase: continue
+            tid, nome, resp, ini, fim = t[1], t[2], t[3], t[4], t[5]
+            st_ = ts[tid]["status"]
+            bar_cls = {"concluido": "bar-done", "em andamento": "bar-wip", "bloqueado": "bar-blk"}.get(st_, "bar-pend")
+            try:
+                s_d   = datetime.strptime(ini, "%Y-%m-%d")
+                e_d   = datetime.strptime(fim, "%Y-%m-%d")
+                s_off = (s_d - START).days
+                dur   = max(1, (e_d - s_d).days + 1)
+                s_pct = round(max(0, s_off) / TOTAL_DAYS * 100, 1)
+                w_pct = round(dur / TOTAL_DAYS * 100, 1)
+            except:
+                s_pct, w_pct = 0, 6
+            short = nome[:34] + "..." if len(nome) > 34 else nome
+            rows += (
+                f"<tr>"
+                f"<td style='font-size:11px;color:#c8d8e8;padding:3px 11px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis' title='{nome}'>{short}</td>"
+                f"<td style='padding:2px 6px'>{rtag(resp)}</td>"
+                f"<td colspan='{TOTAL_DAYS}' style='padding:2px 0'>"
+                f"<div class='tl-track'>"
+                f"<div class='tl-fill {bar_cls}' style='left:{s_pct}%;width:{w_pct}%'>{tid}</div>"
+                f"</div></td>"
+                f"</tr>"
             )
-            st.plotly_chart(fig, use_container_width=True)
 
-    with tab2:
-        st.markdown("#### 📋 Matriz RACI")
-        st.info("**R**esponsável · **A**provador · **C**onsultado · **I**nformado — Por atividade de processo")
+    st.markdown(
+        f"<div style='overflow-x:auto'>"
+        f"<table class='se-tbl' style='min-width:700px'>"
+        f"<thead><tr><th>Tarefa</th><th>Resp.</th>{header}</tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>",
+        unsafe_allow_html=True
+    )
 
-        if not st.session_state.actors or not st.session_state.activities:
-            st.warning("⚠️ Adicione atores (aba anterior) e atividades (Módulo 2) primeiro.")
-        else:
-            st.markdown("##### ➕ Definir RACI")
-            col_f, col_l = st.columns([1,1])
-            with col_f:
-                raci_act = st.selectbox("Atividade", [a["name"] for a in st.session_state.activities])
-                raci_actor = st.selectbox("Ator", [a["name"] for a in st.session_state.actors])
-                raci_role = st.selectbox("Papel RACI", ["R — Responsável", "A — Aprovador", "C — Consultado", "I — Informado"])
-
-                if st.button("✅ Adicionar RACI", type="primary"):
-                    st.session_state.raci.append({
-                        "activity": raci_act, "actor": raci_actor, "role": raci_role[0]
-                    })
-                    st.success("RACI adicionado!")
-                    st.rerun()
-
-            with col_l:
-                if st.session_state.raci:
-                    raci_df = pd.DataFrame(st.session_state.raci)
-                    pivot = raci_df.pivot_table(index="activity", columns="actor", values="role", aggfunc="first")
-                    st.dataframe(pivot.fillna(""), use_container_width=True)
-
-                    raci_colors = {"R":"#d4edda","A":"#cce5ff","C":"#fff3cd","I":"#e2e3e5"}
-                    st.markdown("**Legenda:** 🟢 R=Responsável | 🔵 A=Aprovador | 🟡 C=Consultado | ⚪ I=Informado")
-                else:
-                    st.info("Nenhuma entrada RACI definida.")
-
-    with tab3:
-        st.markdown("#### 🎯 Mapa de Stakeholders")
-        st.info("Posicione stakeholders no mapa **Poder × Interesse** para definir estratégia de engajamento.")
-
-        if not st.session_state.actors:
-            st.warning("Adicione atores na primeira aba.")
-        else:
-            stakeholder_data = []
-            for a in st.session_state.actors:
-                col1, col2, col3 = st.columns([2,1,1])
-                with col1:
-                    st.write(f"**{a['name']}**")
-                with col2:
-                    power = st.slider("Poder", 1, 5, 3, key=f"power_{a['id']}")
-                with col3:
-                    interest = st.slider("Interesse", 1, 5, 3, key=f"interest_{a['id']}")
-                stakeholder_data.append({"name": a["name"], "power": power, "interest": interest, "type": a["type"]})
-
-            if stakeholder_data:
-                df = pd.DataFrame(stakeholder_data)
-                fig = px.scatter(df, x="interest", y="power", text="name", color="type",
-                                  color_discrete_map={"Interno":"#2e6da4","Externo":"#dc3545","Sistema":"#6c757d","Parceiro":"#198754"},
-                                  size=[30]*len(df))
-                fig.add_vline(x=3, line_dash="dash", line_color="gray")
-                fig.add_hline(y=3, line_dash="dash", line_color="gray")
-                fig.update_traces(textposition='top center')
-                fig.add_annotation(x=1.5, y=4.5, text="GERENCIE DE PERTO", showarrow=False, font=dict(size=10, color="#dc3545"))
-                fig.add_annotation(x=4, y=4.5, text="MANTENHA SATISFEITO", showarrow=False, font=dict(size=10, color="#198754"))
-                fig.add_annotation(x=1.5, y=1.5, text="MONITORE", showarrow=False, font=dict(size=10, color="#6c757d"))
-                fig.add_annotation(x=4, y=1.5, text="MANTENHA INFORMADO", showarrow=False, font=dict(size=10, color="#0d6efd"))
-                fig.update_layout(xaxis_range=[0,6], yaxis_range=[0,6], height=400,
-                                   xaxis_title="Interesse", yaxis_title="Poder")
-                st.plotly_chart(fig, use_container_width=True)
-
-# ─────────────────────────────────────────────
-# MÓDULO 4 — REGRAS (SBVR/DMN)
-# ─────────────────────────────────────────────
-elif st.session_state.active_module == "rules":
+    # Legenda
     st.markdown("""
-    <div class="main-header">
-        <h2>📋 Módulo 4: Business Rules Model</h2>
-        <p style="margin:0; opacity:0.9">SBVR v1.5 + DMN 1.5 (OMG) — Vocabulário, Regras, Tabelas de Decisão</p>
+    <div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#8899aa">
+        <div style="width:20px;height:8px;background:linear-gradient(90deg,#1F4E79,#2E75B6);border-radius:1px"></div>Pendente</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#8899aa">
+        <div style="width:20px;height:8px;background:linear-gradient(90deg,#1a5c35,#00e676);border-radius:1px"></div>Concluído</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#8899aa">
+        <div style="width:20px;height:8px;background:linear-gradient(90deg,#5c3a0a,#f5a623);border-radius:1px"></div>Em Andamento</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#8899aa">
+        <div style="width:20px;height:8px;background:linear-gradient(90deg,#5c0a0a,#ff5252);border-radius:1px"></div>Bloqueado</div>
     </div>
     """, unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["📖 Glossário (SBVR)", "📏 Regras de Negócio", "🎰 Tabelas de Decisão (DMN)"])
 
-    with tab1:
-        st.markdown("#### 📖 Vocabulário de Negócio Controlado")
-        st.info("**SBVR + NISO Z39.19:** Um glossário controlado garante que todos usem os mesmos termos da mesma forma — base para regras precisas e sem ambiguidade.")
+# ══════════════════════════════════════════════════════════
+# BLOQUEIOS
+# ══════════════════════════════════════════════════════════
+elif pagina == "🔴 Bloqueios":
+    st.markdown('<div class="sec-hdr">Bloqueios e Dependências <span class="sec-sub">Itens que exigem atenção imediata</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="callout c-warn"><b>Atenção</b>Tarefas com avisos técnicos ou dependências pendentes que bloqueiam o avanço. Resolva antes de prosseguir.</div>', unsafe_allow_html=True)
 
-        col_f, col_l = st.columns([1,1])
-        with col_f:
-            term_name = st.text_input("Termo", placeholder="Ex: Mesa Premium")
-            term_def = st.text_area("Definição", height=80, placeholder="Ex: Mesa localizada em área especial com capacidade ≥ 4 pessoas e vista panorâmica")
-            term_synonyms = st.text_input("Sinônimos", placeholder="Mesa VIP, Mesa Especial")
-            term_context = st.text_input("Contexto/Domínio", placeholder="Ex: Gestão de Reservas")
-            term_source = st.text_input("Fonte", placeholder="Ex: Manual Operacional v3.2")
-
-            if st.button("✅ Adicionar Termo", type="primary"):
-                if term_name:
-                    st.session_state.glossary.append({
-                        "id": new_id(), "term": term_name, "definition": term_def,
-                        "synonyms": term_synonyms, "context": term_context, "source": term_source
-                    })
-                    st.success(f"Termo '{term_name}' adicionado!")
-                    st.rerun()
-
-        with col_l:
-            st.markdown("##### 📚 Glossário")
-            if st.session_state.glossary:
-                search = st.text_input("🔍 Buscar termo", key="gloss_search")
-                terms = [t for t in st.session_state.glossary if 
-                         not search or search.lower() in t["term"].lower()]
-                for t in sorted(terms, key=lambda x: x["term"]):
-                    with st.expander(f"📖 **{t['term']}**"):
-                        st.write(f"**Definição:** {t['definition']}")
-                        if t.get("synonyms"): st.write(f"**Sinônimos:** {t['synonyms']}")
-                        if t.get("context"): st.write(f"**Contexto:** {t['context']}")
-                        if t.get("source"): st.write(f"**Fonte:** {t['source']}")
-            else:
-                st.info("Glossário vazio. Adicione termos de negócio.")
-
-    with tab2:
-        st.markdown("#### 📏 Regras de Negócio")
-        st.info("**SBVR:** Regras podem ser *Obrigações* (deve), *Proibições* (não deve) ou *Permissões* (pode). Classifique em *Estruturais* (definem o negócio) ou *Operativas* (guiam comportamento).")
-
-        col_f, col_l = st.columns([1,1])
-        with col_f:
-            rule_name = st.text_input("Nome da Regra", placeholder="Ex: Reserva Requer Pagamento Antecipado")
-            rule_stmt = st.text_area("Declaração (SBVR)", height=90,
-                                      placeholder="Ex: É obrigatório que toda reserva de mesa premium seja acompanhada de pagamento antecipado de 50% do valor estimado.")
-            rule_type = st.selectbox("Tipo SBVR", ["Structural Rule", "Operative Rule"])
-            rule_modality = st.selectbox("Modalidade", ["Obrigação (deve)", "Proibição (não deve)", "Permissão (pode)"])
-            rule_source = st.text_input("Fonte/Regulação", placeholder="Ex: Política Interna #12 / Lei 8.078/90")
-            rule_activities = st.multiselect("Atividades impactadas", 
-                                              [a["name"] for a in st.session_state.activities])
-
-            if st.button("✅ Adicionar Regra", type="primary"):
-                if rule_name and rule_stmt:
-                    st.session_state.rules.append({
-                        "id": new_id(), "name": rule_name, "statement": rule_stmt,
-                        "type": rule_type, "modality": rule_modality,
-                        "source": rule_source, "activities": rule_activities
-                    })
-                    st.success("Regra adicionada!")
-                    st.rerun()
-
-        with col_l:
-            st.markdown("##### 📋 Regras Definidas")
-            modality_icons = {"Obrigação (deve)":"🔵","Proibição (não deve)":"🔴","Permissão (pode)":"🟢"}
-            if st.session_state.rules:
-                for r in st.session_state.rules:
-                    icon = modality_icons.get(r["modality"],"⚪")
-                    with st.expander(f"{icon} {r['name']}"):
-                        st.write(f"**Declaração:** {r['statement']}")
-                        st.write(f"**Tipo:** {r['type']} | **Modalidade:** {r['modality']}")
-                        if r.get("source"): st.write(f"**Fonte:** {r['source']}")
-                        if r.get("activities"): st.write(f"**Atividades:** {', '.join(r['activities'])}")
-            else:
-                st.info("Nenhuma regra definida.")
-
-    with tab3:
-        st.markdown("#### 🎰 Tabelas de Decisão (DMN 1.5)")
-        st.info("**DMN 1.5:** Tabelas de decisão estruturam lógica condicional. *Hit Policy*: **U**=Única resposta, **A**=Todas que aplicam, **F**=Primeira que aplica.")
-
-        col_f, col_l = st.columns([1,1])
-        with col_f:
-            dt_name = st.text_input("Nome da Decisão", placeholder="Ex: Tipo de Desconto")
-            dt_policy = st.selectbox("Hit Policy (DMN)", ["U — Unique","A — Any","F — First","R — Rule Order","C — Collect"])
-            dt_input1 = st.text_input("Entrada 1", placeholder="Ex: Tipo de Cliente")
-            dt_input2 = st.text_input("Entrada 2 (opcional)", placeholder="Ex: Valor da Compra")
-            dt_output = st.text_input("Saída", placeholder="Ex: Percentual de Desconto")
-
-            st.markdown("**Regras da Tabela:**")
-            if "temp_dt_rules" not in st.session_state:
-                st.session_state.temp_dt_rules = []
-
-            r_in1 = st.text_input("Condição 1", placeholder='Ex: "VIP"', key="dt_r_in1")
-            r_in2 = st.text_input("Condição 2", placeholder='Ex: ">1000"', key="dt_r_in2")
-            r_out = st.text_input("Resultado", placeholder="Ex: 15%", key="dt_r_out")
-
-            if st.button("➕ Adicionar Linha"):
-                if r_out:
-                    st.session_state.temp_dt_rules.append(
-                        {"in1": r_in1, "in2": r_in2, "out": r_out}
-                    )
-                    st.rerun()
-
-            if st.session_state.temp_dt_rules:
-                rule_df = pd.DataFrame(st.session_state.temp_dt_rules)
-                rule_df.columns = [dt_input1 or "Entrada 1", dt_input2 or "Entrada 2", dt_output or "Saída"]
-                st.dataframe(rule_df, use_container_width=True)
-
-            if st.button("✅ Salvar Tabela de Decisão", type="primary"):
-                if dt_name and st.session_state.temp_dt_rules:
-                    st.session_state.decision_tables.append({
-                        "id": new_id(), "name": dt_name, "hit_policy": dt_policy,
-                        "input1": dt_input1, "input2": dt_input2, "output": dt_output,
-                        "rules": st.session_state.temp_dt_rules.copy()
-                    })
-                    st.session_state.temp_dt_rules = []
-                    st.success(f"Tabela '{dt_name}' salva!")
-                    st.rerun()
-
-        with col_l:
-            st.markdown("##### 📊 Tabelas Salvas")
-            for dt in st.session_state.decision_tables:
-                with st.expander(f"🎰 {dt['name']} [{dt['hit_policy'][0]}]"):
-                    df = pd.DataFrame(dt["rules"])
-                    if not df.empty:
-                        df.columns = [dt.get("input1","In1"), dt.get("input2","In2"), dt.get("output","Out")]
-                        st.dataframe(df, use_container_width=True)
-
-# ─────────────────────────────────────────────
-# MÓDULO 5 — VALUE REALIZATION DASHBOARD
-# ─────────────────────────────────────────────
-elif st.session_state.active_module == "dashboard":
-    st.markdown("""
-    <div class="main-header">
-        <h2>📊 Value Realization Dashboard</h2>
-        <p style="margin:0; opacity:0.9">Bridgeland & Zahavi Cap.12 — Análise, Simulação e Deployment de Valor</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    scores = get_completeness()
-    total = sum(scores.values())
-    va, nva, bva = va_ratio()
-    total_acts = va + nva + bva
-
-    # KPI Row
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("🏆 Business Model Score", f"{total:.0f}/100",
-                delta="Meta: 80+" if total < 80 else "✅ Meta atingida")
-    col2.metric("🎯 Metas Definidas", len(st.session_state.goals))
-    col3.metric("⚙️ Processos", len(st.session_state.processes))
-    col4.metric("👥 Atores", len(st.session_state.actors))
-    col5.metric("📋 Regras", len(st.session_state.rules))
-
-    st.divider()
-    c1, c2 = st.columns([1,1])
-
-    with c1:
-        st.markdown("#### 🕸️ Maturidade por Disciplina")
-        cats = list(scores.keys())
-        vals = list(scores.values())
-        fig = go.Figure(go.Scatterpolar(
-            r=vals + [vals[0]], theta=cats + [cats[0]],
-            fill='toself', name='Atual',
-            line_color='#2e6da4', fillcolor='rgba(46,109,164,0.25)'
-        ))
-        fig.add_trace(go.Scatterpolar(
-            r=[25,25,25,25,25], theta=cats + [cats[0]],
-            name='Meta (100%)', line=dict(color='red', dash='dash'),
-            fillcolor='rgba(255,0,0,0)'
-        ))
-        fig.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[0,25])),
-            showlegend=True, height=350
+    rows = ""
+    for t in TASKS_RAW:
+        tid = t[1]
+        s   = ts[tid]
+        aviso = s["aviso"]
+        if not aviso and s["status"] != "bloqueado":
+            continue
+        # Deps pendentes
+        deps_pend = []
+        for dep in DEPS.get(tid, []):
+            dep_task = next((x for x in TASKS_RAW if x[1] == dep), None)
+            if dep_task and ts[dep]["status"] != "concluido":
+                deps_pend.append(f"{dep}: {dep_task[2][:38]} [{ts[dep]['status']}]")
+        deps_html = "".join(
+            f'<br><span style="color:#f5a623;font-size:10px;font-family:IBM Plex Mono,monospace">↳ dep: {d}</span>'
+            for d in deps_pend
         )
-        st.plotly_chart(fig, use_container_width=True)
-
-    with c2:
-        st.markdown("#### 📈 Indicadores de Valor")
-        
-        # Alignment Score
-        goals_count = len(st.session_state.goals)
-        procs_with_goals = sum(1 for p in st.session_state.processes if p.get("goal") != "(nenhuma)")
-        alignment = (procs_with_goals / len(st.session_state.processes) * 100) if st.session_state.processes else 0
-
-        # Rules Coverage
-        acts_with_rules = sum(1 for a in st.session_state.activities if a.get("rule") != "(nenhuma)")
-        rules_coverage = (acts_with_rules / total_acts * 100) if total_acts > 0 else 0
-
-        # VA Ratio
-        va_pct = (va / total_acts * 100) if total_acts > 0 else 0
-
-        indicators = [
-            ("Strategy-Process Alignment", alignment, "% processos vinculados a metas"),
-            ("Rules Coverage", rules_coverage, "% atividades com regra definida"),
-            ("Value-Added Activity Ratio", va_pct, "% atividades que agregam valor"),
-            ("Stakeholder Coverage", min(len(st.session_state.actors)*10, 100), "Abrangência de stakeholders"),
-        ]
-
-        for name, val, desc in indicators:
-            color = "#198754" if val >= 70 else "#ffc107" if val >= 40 else "#dc3545"
-            st.markdown(f"""
-            <div class="kpi-box">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <div><b>{name}</b><br><small style="color:#666;">{desc}</small></div>
-                    <div style="font-size:1.5rem;font-weight:800;color:{color};">{val:.0f}%</div>
-                </div>
-                <div style="background:#e9ecef;border-radius:4px;height:6px;margin-top:0.5rem;">
-                    <div style="background:{color};height:6px;border-radius:4px;width:{val}%;"></div>
-                </div>
-            </div>""", unsafe_allow_html=True)
-
-    st.divider()
-    st.markdown("#### 🤖 Recomendações Inteligentes (AI-Augmented Analysis)")
-
-    recommendations = []
-    if not st.session_state.vision:
-        recommendations.append(("🔴 Crítico", "Defina a Visão da empresa — elemento fundamental do BMM (OMG v1.3)"))
-    if not st.session_state.goals:
-        recommendations.append(("🔴 Crítico", "Adicione pelo menos 3 Metas cobrindo as 4 perspectivas do Balanced Scorecard"))
-    if nva > 0:
-        recommendations.append(("🟡 Melhoria", f"{nva} atividades NVA identificadas — aplique Lean para eliminá-las (potencial de {nva/(total_acts or 1):.0%} de redução no lead time)"))
-    if not st.session_state.rules:
-        recommendations.append(("🟡 Melhoria", "Documente as regras de negócio — processos sem regras são propensos a erros e inconsistências"))
-    if alignment < 60 and st.session_state.processes:
-        recommendations.append(("🟠 Atenção", f"Apenas {alignment:.0f}% dos processos estão vinculados a metas estratégicas — risco de desalinhamento organizacional"))
-    if len(st.session_state.actors) == 0:
-        recommendations.append(("🟡 Melhoria", "Defina atores e papéis — a Matriz RACI previne conflitos de responsabilidade"))
-    if not st.session_state.decision_tables and st.session_state.rules:
-        recommendations.append(("💡 Sugestão", "Converta regras complexas em Tabelas de Decisão DMN 1.5 para maior precisão e automação"))
-    if total >= 80:
-        recommendations.append(("🟢 Excelente", "Modelo de negócio bem estruturado! Considere realizar simulações de processo e análise de cenários"))
-
-    if not recommendations:
-        recommendations.append(("💡 Sugestão", "Continue adicionando detalhes ao modelo para aumentar a precisão da análise"))
-
-    for level, rec in recommendations:
-        color = {"🔴 Crítico":"#f8d7da","🟡 Melhoria":"#fff3cd","🟠 Atenção":"#ffeeba",
-                 "🟢 Excelente":"#d4edda","💡 Sugestão":"#cce5ff"}.get(level,"#e9ecef")
-        st.markdown(f"""<div style="background:{color};border-radius:8px;padding:0.7rem 1rem;margin:0.3rem 0;">
-            <b>{level}:</b> {rec}</div>""", unsafe_allow_html=True)
-
-    # Export section
-    st.divider()
-    st.markdown("#### 📤 Exportar Modelo")
-    col_e1, col_e2 = st.columns(2)
-    with col_e1:
-        model_data = {
-            "company": st.session_state.company_name,
-            "timestamp": datetime.now().isoformat(),
-            "standard": "OMG BMM 1.3 + BPMN 2.0.2 + SBVR 1.5 + DMN 1.5",
-            "motivation": {
-                "vision": st.session_state.vision,
-                "mission": st.session_state.mission,
-                "goals": st.session_state.goals,
-                "strategies": st.session_state.strategies,
-            },
-            "processes": st.session_state.processes,
-            "activities": st.session_state.activities,
-            "organization": {"actors": st.session_state.actors, "raci": st.session_state.raci},
-            "rules": {"rules": st.session_state.rules, "glossary": st.session_state.glossary,
-                      "decision_tables": st.session_state.decision_tables},
-            "scores": scores,
-        }
-        json_str = json.dumps(model_data, ensure_ascii=False, indent=2)
-        st.download_button(
-            "⬇️ Exportar JSON (OMG-compatible)",
-            data=json_str,
-            file_name=f"business_model_{st.session_state.company_name or 'export'}.json",
-            mime="application/json",
-            use_container_width=True
+        rows += (
+            f"<tr>"
+            f"<td style='font-family:IBM Plex Mono,monospace;color:#ff5252'>{tid}</td>"
+            f"<td><strong style='color:#e8f0f8'>{t[2]}</strong>{deps_html}</td>"
+            f"<td><span style='font-size:10px;color:#8899aa;font-family:IBM Plex Mono,monospace'>{t[0]}</span></td>"
+            f"<td>{rtag(t[3])}</td>"
+            f"<td style='font-size:11px;color:#ffaa00'>{aviso if aviso else '—'}</td>"
+            f"<td>{sbadge(s['status'])}</td>"
+            f"</tr>"
         )
 
-    with col_e2:
-        # Generate summary report
-        report = f"""# Business Model Report — {st.session_state.company_name}
-Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}
-Padrões: BMM 1.3 | BPMN 2.0.2 | SBVR 1.5 | DMN 1.5
-
-## Score: {total}/100
-
-## Motivação
-- **Visão:** {st.session_state.vision or '(não definida)'}
-- **Missão:** {st.session_state.mission or '(não definida)'}
-- **Metas:** {len(st.session_state.goals)}
-- **Estratégias:** {len(st.session_state.strategies)}
-
-## Processos
-- **Processos:** {len(st.session_state.processes)}
-- **Atividades:** {total_acts}
-- **VA/NVA/BVA:** {va}/{nva}/{bva}
-
-## Organização
-- **Atores:** {len(st.session_state.actors)}
-- **Entradas RACI:** {len(st.session_state.raci)}
-
-## Regras
-- **Regras:** {len(st.session_state.rules)}
-- **Termos no Glossário:** {len(st.session_state.glossary)}
-- **Tabelas de Decisão:** {len(st.session_state.decision_tables)}
-
-## Indicadores
-- Strategy-Process Alignment: {alignment:.0f}%
-- VA Activity Ratio: {va_pct:.0f}%
-
-Referências: Bridgeland & Zahavi (2009) | OMG.org/spec
-"""
-        st.download_button(
-            "⬇️ Exportar Relatório (Markdown)",
-            data=report,
-            file_name=f"report_{st.session_state.company_name or 'export'}.md",
-            mime="text/markdown",
-            use_container_width=True
+    if rows:
+        st.markdown(
+            f"<table class='se-tbl'><thead><tr>"
+            f"<th>ID</th><th>Tarefa / Deps Pendentes</th><th>Fase</th><th>Resp.</th><th>Aviso Técnico</th><th>Status</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table>",
+            unsafe_allow_html=True
         )
-
-# ─────────────────────────────────────────────
-# MÓDULO 6 — RASTREABILIDADE
-# ─────────────────────────────────────────────
-elif st.session_state.active_module == "traceability":
-    st.markdown("""
-    <div class="main-header">
-        <h2>🔗 Módulo 6: Mapa de Rastreabilidade</h2>
-        <p style="margin:0; opacity:0.9">Bridgeland & Zahavi — Interdependência entre as 4 Disciplinas de Business Modeling</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.info("A rastreabilidade é a capacidade de conectar **por quê** (Motivação) → **como** (Processos) → **quem** (Organização) → **o quê** (Regras). Sem isso, os modelos ficam isolados e perdem valor.")
-
-    # Build traceability graph
-    G = nx.DiGraph()
-
-    # Add nodes
-    if st.session_state.vision:
-        G.add_node("Visão", layer="motivation", label=st.session_state.vision[:30]+"...")
-    for g in st.session_state.goals:
-        G.add_node(f"Meta:{g['name']}", layer="motivation", label=g['name'])
-        if st.session_state.vision:
-            G.add_edge("Visão", f"Meta:{g['name']}")
-    for s in st.session_state.strategies:
-        G.add_node(f"Estratégia:{s['name']}", layer="motivation", label=s['name'])
-        if s.get("goal") and s["goal"] != "(nenhuma)":
-            G.add_edge(f"Meta:{s['goal']}", f"Estratégia:{s['name']}")
-    for p in st.session_state.processes:
-        G.add_node(f"Processo:{p['name']}", layer="process", label=p['name'])
-        if p.get("goal") and p["goal"] != "(nenhuma)":
-            G.add_edge(f"Meta:{p['goal']}", f"Processo:{p['name']}")
-    for a in st.session_state.activities:
-        G.add_node(f"Atividade:{a['name']}", layer="activity", label=a['name'])
-        G.add_edge(f"Processo:{a['process_name']}", f"Atividade:{a['name']}")
-        if a.get("role") and a["role"] != "(nenhum)":
-            G.add_node(f"Ator:{a['role']}", layer="organization", label=a['role'])
-            G.add_edge(f"Atividade:{a['name']}", f"Ator:{a['role']}")
-        if a.get("rule") and a["rule"] != "(nenhuma)":
-            G.add_node(f"Regra:{a['rule']}", layer="rules", label=a['rule'])
-            G.add_edge(f"Atividade:{a['name']}", f"Regra:{a['rule']}")
-
-    if len(G.nodes()) < 2:
-        st.warning("⚠️ Adicione dados nos módulos anteriores para visualizar a rastreabilidade.")
-        st.markdown("""
-        **Exemplo de rastreabilidade completa:**
-        ```
-        Visão → Meta (Financeiro) → Estratégia de Expansão
-                                  → Processo: Reserva de Mesa
-                                    → Atividade: Verificar Disponibilidade
-                                      → Ator: Recepcionista
-                                      → Regra: Capacidade Máxima
-        ```
-        """)
     else:
-        # Visualize with plotly
-        pos = nx.spring_layout(G, seed=42, k=2)
-        layer_colors = {
-            "motivation": "#ffc107",
-            "process": "#0d6efd",
-            "activity": "#6610f2",
-            "organization": "#198754",
-            "rules": "#dc3545"
-        }
+        st.markdown('<div class="callout c-ok"><b>Tudo certo</b>Nenhum bloqueio ativo no momento 🎉</div>', unsafe_allow_html=True)
 
-        edge_x, edge_y = [], []
-        for e in G.edges():
-            x0,y0 = pos[e[0]]; x1,y1 = pos[e[1]]
-            edge_x += [x0,x1,None]; edge_y += [y0,y1,None]
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=edge_x, y=edge_y, mode='lines',
-                                  line=dict(width=1.5, color='#aaa'), hoverinfo='none'))
+# ══════════════════════════════════════════════════════════
+# ATUALIZAR
+# ══════════════════════════════════════════════════════════
+elif pagina == "✏️ Atualizar":
+    st.markdown('<div class="sec-hdr">Atualizar Status de Tarefa</div>', unsafe_allow_html=True)
+    st.markdown('<div class="callout c-info"><b>Como usar</b>Selecione a tarefa, atualize o status e clique em Salvar. O dashboard e todos os painéis atualizam automaticamente.</div>', unsafe_allow_html=True)
 
-        for layer in ["motivation","process","activity","organization","rules"]:
-            layer_nodes = [(n, G.nodes[n]) for n in G.nodes() if G.nodes[n].get("layer") == layer]
-            if layer_nodes:
-                xs = [pos[n][0] for n,_ in layer_nodes]
-                ys = [pos[n][1] for n,_ in layer_nodes]
-                labels = [d.get("label", n.split(":",1)[-1])[:20] for n,d in layer_nodes]
-                layer_labels = {"motivation":"🎯 Motivação","process":"⚙️ Processo",
-                                "activity":"🔄 Atividade","organization":"👥 Organização","rules":"📋 Regra"}
-                fig.add_trace(go.Scatter(
-                    x=xs, y=ys, mode='markers+text',
-                    marker=dict(size=25, color=layer_colors[layer], line=dict(width=2, color='white')),
-                    text=labels, textposition='top center',
-                    name=layer_labels.get(layer, layer), textfont=dict(size=9)
-                ))
+    # ── Formulário individual ──────────────────────────────
+    tid_opts = [f"{t[1]} — {t[2]}" for t in TASKS_RAW]
 
-        fig.update_layout(
-            height=500, showlegend=True,
-            xaxis=dict(showticklabels=False), yaxis=dict(showticklabels=False),
-            plot_bgcolor='rgba(240,247,255,0.5)',
-            margin=dict(l=20,r=20,t=30,b=20),
-            title=f"Grafo de Rastreabilidade — {st.session_state.company_name or 'Modelo de Negócio'}"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # selectbox fora do form para atualizar o preview ao vivo
+    sel     = st.selectbox("Tarefa", tid_opts, key="sel_tarefa")
+    tid_sel = sel.split(" — ")[0]
 
-        # Stats
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Nós no grafo", len(G.nodes()))
-        col2.metric("Conexões", len(G.edges()))
-        isolated = len([n for n in G.nodes() if G.degree(n) == 0])
-        col3.metric("Elementos Isolados", isolated, 
-                     delta="Conecte-os" if isolated > 0 else "✅ Todos conectados",
-                     delta_color="inverse" if isolated > 0 else "normal")
+    t_sel = next(t for t in TASKS_RAW if t[1] == tid_sel)
+    deps  = DEPS.get(tid_sel, [])
 
-        if isolated > 0:
-            st.warning(f"⚠️ {isolated} elemento(s) sem conexão. Rastreabilidade completa exige que todos os elementos estejam conectados à cadeia Visão→Objetivo→Processo→Regra.")
+    # Preview acima do form
+    deps_html = ""
+    for dep in deps:
+        dep_task = next((x for x in TASKS_RAW if x[1] == dep), None)
+        if dep_task:
+            dep_st = ts[dep]["status"]
+            color  = "#00e676" if dep_st == "concluido" else "#f5a623" if dep_st == "em andamento" else "#ff5252" if dep_st == "bloqueado" else "#8899aa"
+            deps_html += f'<div style="font-size:11px;font-family:IBM Plex Mono,monospace;color:{color};margin-bottom:3px">↳ {dep}: {dep_task[2][:42]} <span style="color:{color}">[{dep_st}]</span></div>'
 
-# ─────────────────────────────────────────────
-# FOOTER
-# ─────────────────────────────────────────────
-st.divider()
-st.caption("""
-**Business Modeling Studio — POC** | 
-Baseado em: *Bridgeland & Zahavi (2009)* + **OMG BMM 1.3** + **BPMN 2.0.2** + **SBVR 1.5** + **DMN 1.5** + **ArchiMate 3.2** + **ANSI/NISO Z39.19** + **APQC PCF v7.3** |
-Frameworks: Balanced Scorecard (Kaplan & Norton) · Business Model Canvas (Osterwalder) · Porter's Value Chain
-""")
+    st.markdown(f"""
+    <div style="background:#111827;border:1px solid #1a2235;border-radius:6px;padding:16px;margin-bottom:16px">
+      <div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#f5a623;margin-bottom:4px;letter-spacing:.06em">{tid_sel} · {t_sel[0]}</div>
+      <div style="font-size:14px;color:#e8f0f8;font-weight:600;margin-bottom:8px">{t_sel[2]}</div>
+      <div style="margin-bottom:8px">{rtag(t_sel[3])}</div>
+      <div style="font-size:11px;color:#8899aa;font-family:IBM Plex Mono,monospace">{t_sel[4]} → {t_sel[5]}</div>
+      {"<div style='margin-top:10px;font-size:9px;color:#8899aa;font-family:IBM Plex Mono,monospace;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px'>Dependências</div>" + deps_html if deps_html else ""}
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Form para evitar rerun dentro de colunas
+    with st.form("form_atualizar", clear_on_submit=False):
+        cur_status = ts[tid_sel]["status"]
+        cur_aviso  = ts[tid_sel]["aviso"]
+        new_status = st.selectbox("Novo Status", STATUS_OPT, index=STATUS_OPT.index(cur_status))
+        new_aviso  = st.text_area("Aviso / Bloqueio (opcional)", value=cur_aviso, height=80)
+        submitted  = st.form_submit_button("💾  Salvar Alteração", type="primary", use_container_width=True)
+
+    if submitted:
+        st.session_state.task_state[tid_sel]["status"] = new_status
+        st.session_state.task_state[tid_sel]["aviso"]  = new_aviso.strip()
+        st.success(f"✅ **{tid_sel}** atualizado para **{new_status}**")
+        st.rerun()
+
+    # ── Atalho: marcar fase inteira ────────────────────────
+    st.divider()
+    st.markdown('<div style="font-size:10px;color:#8899aa;font-family:IBM Plex Mono,monospace;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px">Atalho — Marcar fase inteira</div>', unsafe_allow_html=True)
+
+    with st.form("form_bulk", clear_on_submit=False):
+        fase_sel    = st.selectbox("Fase", FASES)
+        status_bulk = st.selectbox("Novo status para todas as tarefas", STATUS_OPT)
+        submitted_bulk = st.form_submit_button("Aplicar a toda a fase", use_container_width=True)
+
+    if submitted_bulk:
+        for t in TASKS_RAW:
+            if t[0] == fase_sel:
+                st.session_state.task_state[t[1]]["status"] = status_bulk
+        st.success(f"✅ Todas as tarefas de **{fase_sel}** → **{status_bulk}**")
+        st.rerun()
